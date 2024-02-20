@@ -1,128 +1,289 @@
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.*;
-import java.net.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.List;
-import java.util.ArrayList;
+import java.util.Map;
 import java.util.concurrent.*;
 
 public class ImageDownloaderApp extends JFrame {
-    private JTextField urlField;
-    private JButton downloadButton;
-    private JTextArea logArea;
+
     private ExecutorService executorService;
+    private static final String DOWNLOAD_DIRECTORY = "./downloaded_file/";
     private List<Future<?>> downloadTasks;
+    private Map<Future<?>, DownloadInfo> downloadInfoMap;
+
+    private JPanel panel;
+    private JTextField inputField;
+    private JProgressBar progressBar;
+    private JButton downloadButton;
+    private JButton pauseButton;
+    private JButton resumeButton;
+    private JButton cancelButton;
 
     public ImageDownloaderApp() {
-        setTitle("Image Downloader");
-        setSize(400, 300);
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setLayout(new BorderLayout());
-
         initComponents();
-        addListeners();
-
-        executorService = Executors.newFixedThreadPool(5); // Using a fixed-size thread pool
-        downloadTasks = new ArrayList<>();
-
-        setVisible(true);
+        executorService = Executors.newFixedThreadPool(5);
+        downloadTasks = new CopyOnWriteArrayList<>();
+        downloadInfoMap = new ConcurrentHashMap<>();
     }
 
     private void initComponents() {
-        JPanel inputPanel = new JPanel();
-        inputPanel.setLayout(new FlowLayout());
-
-        JLabel urlLabel = new JLabel("URL:");
-        urlField = new JTextField(20);
+        setTitle("Image Downloader");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(600, 200);
+        setLocationRelativeTo(null); // Center the window
+    
+        panel = new JPanel();
+        GroupLayout layout = new GroupLayout(panel);
+        panel.setLayout(layout);
+        layout.setAutoCreateGaps(true);
+        layout.setAutoCreateContainerGaps(true);
+    
+        inputField = new JTextField();
+        inputField.setFont(inputField.getFont().deriveFont(Font.PLAIN, 16));
+    
+        progressBar = new JProgressBar();
+        progressBar.setStringPainted(true);
+    
         downloadButton = new JButton("Download");
-
-        inputPanel.add(urlLabel);
-        inputPanel.add(urlField);
-        inputPanel.add(downloadButton);
-
-        logArea = new JTextArea(10, 30);
-        logArea.setEditable(false);
-
-        JScrollPane scrollPane = new JScrollPane(logArea);
-
-        add(inputPanel, BorderLayout.NORTH);
-        add(scrollPane, BorderLayout.CENTER);
-    }
-
-    private void addListeners() {
+        downloadButton.setFont(downloadButton.getFont().deriveFont(Font.PLAIN, 16));
         downloadButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                String url = urlField.getText().trim();
-                if (!url.isEmpty()) {
-                    downloadImage(url);
-                }
+                download_btnActionPerformed(e);
             }
         });
+    
+        pauseButton = new JButton("Pause");
+        pauseButton.setFont(pauseButton.getFont().deriveFont(Font.PLAIN, 16));
+        pauseButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                pause_btnActionPerformed(e);
+            }
+        });
+    
+        resumeButton = new JButton("Resume");
+        resumeButton.setFont(resumeButton.getFont().deriveFont(Font.PLAIN ,16));
+        resumeButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                resume_btnActionPerformed(e);
+            }
+        });
+    
+        cancelButton = new JButton("Cancel");
+        cancelButton.setFont(cancelButton.getFont().deriveFont(Font.PLAIN, 16));
+        cancelButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                cancel_btnActionPerformed(e);
+            }
+        });
+    
+        layout.setHorizontalGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+                .addComponent(inputField)
+                .addComponent(progressBar)
+                .addGroup(layout.createSequentialGroup()
+                        .addComponent(downloadButton)
+                        .addComponent(pauseButton)
+                        .addComponent(resumeButton)
+                        .addComponent(cancelButton)));
+    
+        layout.setVerticalGroup(layout.createSequentialGroup()
+                .addComponent(inputField, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE)
+                .addComponent(progressBar, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE)
+                .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                        .addComponent(downloadButton)
+                        .addComponent(pauseButton)
+                        .addComponent(resumeButton)
+                        .addComponent(cancelButton)));
+    
+        layout.linkSize(SwingConstants.HORIZONTAL, downloadButton, pauseButton, resumeButton, cancelButton);
+    
+        getContentPane().add(panel);
+    }
+    
+
+    private void download_btnActionPerformed(ActionEvent evt) {
+        // This method is called when the download button is clicked.
+        // It reads URLs from the input field and starts downloading the images.
+        String urlsText = inputField.getText();
+        String[] urls = urlsText.split("[,\\s]+");
+        for (String url : urls) {
+            if (!url.isEmpty()) {
+                downloadImage(url);
+            }
+        }
     }
 
-    private void downloadImage(String url) {
-        Future<?> task = executorService.submit(new Runnable() {
+    private void pause_btnActionPerformed(ActionEvent evt) {
+        // This method is called when the pause button is clicked.
+        // It pauses the ongoing downloads.
+        pauseDownloads();
+    }
+
+    private void resume_btnActionPerformed(ActionEvent evt) {
+        // This method is called when the resume button is clicked.
+        // It resumes the paused downloads.
+        resumeDownloads();
+    }
+
+    private void cancel_btnActionPerformed(ActionEvent evt) {
+        // This method is called when the cancel button is clicked.
+        // It cancels all the ongoing downloads.
+        cancelDownloads();
+    }
+
+    private void downloadImage(String urlString) {
+        // This method downloads the image from the given URL.
+        Runnable downloadTask = new Runnable() {
             @Override
             public void run() {
+                DownloadInfo downloadInfo = downloadInfoMap.get(Thread.currentThread());
+                int progress = downloadInfo != null ? downloadInfo.getProgress() : 0;
                 try {
-                    URL imageUrl = new URL(url);
-                    String fileName = imageUrl.getFile();
-                    int lastSlashIndex = fileName.lastIndexOf('/');
-                    if (lastSlashIndex != -1 && lastSlashIndex < fileName.length() - 1) {
-                        fileName = fileName.substring(lastSlashIndex + 1);
-                    } else {
-                        fileName = "image" + System.currentTimeMillis() + ".jpg";
-                    }
-                    File outputFile = new File(fileName);
+                    URL url = new URL(urlString);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0");
 
-                    HttpURLConnection connection = (HttpURLConnection) imageUrl.openConnection();
-                    connection.setRequestMethod("GET");
+                    if (progress > 0) {
+                        connection.setRequestProperty("Range", "bytes=" + progress + "-");
+                    }
 
                     int responseCode = connection.getResponseCode();
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        try (InputStream inputStream = connection.getInputStream();
-                             FileOutputStream outputStream = new FileOutputStream(outputFile)) {
-                            byte[] buffer = new byte[1024];
-                            int bytesRead;
-                            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                                outputStream.write(buffer, 0, bytesRead);
+                    if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_PARTIAL) {
+                        int contentLength = connection.getContentLength();
+                        InputStream inputStream = connection.getInputStream();
+                        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[1024];
+                        int bytesRead;
+
+                        while ((bytesRead = inputStream.read(buffer)) != -1) {
+                            outputStream.write(buffer, 0, bytesRead);
+                            progress += bytesRead;
+                            int currentProgress = (int) ((progress / (double) contentLength) * 100);
+                            SwingUtilities.invokeLater(new Runnable() {
+                                @Override
+                                public void run() {
+                                    progressBar.setValue(currentProgress);
+                                }
+                            });
+
+                            if (Thread.currentThread().isInterrupted()) {
+                                throw new InterruptedException("Download interrupted");
                             }
+
+                            Thread.sleep(50);
                         }
-                        logMessage("Downloaded image: " + fileName);
+
+                        String fileName = "image_" + System.currentTimeMillis() + ".jpg";
+                        saveImage(outputStream.toByteArray(), fileName);
+
+                        inputStream.close();
+                        outputStream.close();
                     } else {
-                        logMessage("Failed to download image: " + fileName + ", HTTP response code: " + responseCode);
+                        throw new IOException("Failed to download image. Response code: " + responseCode);
                     }
-                } catch (IOException ex) {
-                    logMessage("Error downloading image: " + ex.getMessage());
+                } catch (IOException | InterruptedException e) {
+                    if (e instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (!(e instanceof InterruptedException)) {
+                        e.printStackTrace();
+                    }
                 }
             }
-        });
+        };
+
+        Future<?> task = executorService.submit(downloadTask);
         downloadTasks.add(task);
+        downloadInfoMap.put(task, new DownloadInfo(urlString, 0));
     }
 
-    private void logMessage(String message) {
-        SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                logArea.append(message + "\n");
+    private void saveImage(byte[] imageData, String fileName) {
+        // This method saves the downloaded image data to a file.
+        File directory = new File("./downloaded_file/");
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        String fullPath = "./downloaded_file/" + fileName;
+
+        try {
+            FileOutputStream outputStream = new FileOutputStream(fullPath);
+            outputStream.write(imageData);
+            outputStream.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    private void resumeDownloads() {
+        // This method resumes the paused downloads.
+        for (Future<?> task : downloadTasks) {
+            if (task.isCancelled()) {
+                DownloadInfo downloadInfo = downloadInfoMap.get(task);
+                if (downloadInfo != null) {
+                    downloadImage(downloadInfo.getUrl());
+                }
             }
-        });
+        }
     }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            @Override
+    private void pauseDownloads() {
+        // This method pauses the ongoing downloads.
+        for (Future<?> task : downloadTasks) {
+            if (!task.isDone() && !task.isCancelled()) {
+                task.cancel(true);
+            }
+        }
+    }
+
+    private void cancelDownloads() {
+        // This method cancels all the ongoing downloads.
+        for (Future<?> task : downloadTasks) {
+            task.cancel(true);
+        }
+        progressBar.setValue(0);
+    }
+
+    private class DownloadInfo {
+        // This class holds information about a download task.
+        private String url;
+        private int progress;
+
+        public DownloadInfo(String url, int progress) {
+            this.url = url;
+            this.progress = progress;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public int getProgress() {
+            return progress;
+        }
+    }
+
+    public static void main(String args[]) {
+        // Set the look and feel to the system's look and feel
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | UnsupportedLookAndFeelException ex) {
+            ex.printStackTrace();
+        }
+
+        java.awt.EventQueue.invokeLater(new Runnable() {
             public void run() {
-                new ImageDownloaderApp();
+                new ImageDownloaderApp().setVisible(true);
             }
         });
     }
 }
-
-
-
-// Tested Urls
-// https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/240px-PNG_transparency_demonstration_1.png
-// https://via.placeholder.com/150

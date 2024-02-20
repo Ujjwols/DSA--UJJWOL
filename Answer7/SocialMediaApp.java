@@ -1,149 +1,214 @@
-import javax.swing.*;
-import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
-class User {
-    private String username;
-    private Set<User> friends;
-    private Set<String> interests;
+class SocialGraph {
+    Map<Integer, List<Integer>> adjacencyList;
 
-    public User(String username) {
-        this.username = username;
-        this.friends = new HashSet<>();
-        this.interests = new HashSet<>();
+    public SocialGraph() {
+        adjacencyList = new HashMap<>();
     }
 
-    public String getUsername() {
-        return username;
+    public void addEdge(int userId1, int userId2) {
+        adjacencyList.computeIfAbsent(userId1, k -> new ArrayList<>()).add(userId2);
+        adjacencyList.computeIfAbsent(userId2, k -> new ArrayList<>()).add(userId1);
     }
 
-    public Set<User> getFriends() {
-        return friends;
-    }
-
-    public void addFriend(User friend) {
-        friends.add(friend);
-    }
-
-    public Set<String> getInterests() {
-        return interests;
-    }
-
-    public void addInterest(String interest) {
-        interests.add(interest);
+    public List<Integer> getFriends(int userId) {
+        return adjacencyList.getOrDefault(userId, new ArrayList<>());
     }
 }
 
-class SocialNetwork {
-    private Set<User> users;
+class User {
+    private int id;
+    private Set<Integer> likes;
+    private Set<Integer> comments;
+    private Set<Integer> shares;
 
-    public SocialNetwork() {
-        this.users = new HashSet<>();
+    public User(int id) {
+        this.id = id;
+        this.likes = new HashSet<>();
+        this.comments = new HashSet<>();
+        this.shares = new HashSet<>();
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void likePost(int postId) {
+        likes.add(postId);
+    }
+
+    public void commentOnPost(int postId) {
+        comments.add(postId);
+    }
+
+    public void sharePost(int postId) {
+        shares.add(postId);
+    }
+
+    public Set<Integer> getLikes() {
+        return likes;
+    }
+
+    public Set<Integer> getComments() {
+        return comments;
+    }
+
+    public Set<Integer> getShares() {
+        return shares;
+    }
+}
+
+class Post {
+    private int id;
+    private Set<Integer> likes;
+    private Set<Integer> comments;
+    private Set<Integer> shares;
+
+    public Post(int id) {
+        this.id = id;
+        this.likes = new HashSet<>();
+        this.comments = new HashSet<>();
+        this.shares = new HashSet<>();
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void addLike(int userId) {
+        likes.add(userId);
+    }
+
+    public void addComment(int userId) {
+        comments.add(userId);
+    }
+
+    public void addShare(int userId) {
+        shares.add(userId);
+    }
+
+    public Set<Integer> getLikes() {
+        return likes;
+    }
+
+    public Set<Integer> getComments() {
+        return comments;
+    }
+
+    public Set<Integer> getShares() {
+        return shares;
+    }
+}
+
+class SocialMediaRecommendationSystem {
+    SocialGraph socialGraph;
+    Map<Integer, User> users;
+    Map<Integer, Post> posts;
+
+    public SocialMediaRecommendationSystem() {
+        socialGraph = new SocialGraph();
+        users = new HashMap<>();
+        posts = new HashMap<>();
     }
 
     public void addUser(User user) {
-        users.add(user);
+        users.put(user.getId(), user);
     }
 
-    public User getUser(String username) {
-        for (User user : users) {
-            if (user.getUsername().equals(username)) {
-                return user;
-            }
-        }
-        return null;
+    public void addPost(Post post) {
+        posts.put(post.getId(), post);
     }
 
-    public void followUser(String followerUsername, String followeeUsername) {
-        User follower = getUser(followerUsername);
-        User followee = getUser(followeeUsername);
-        if (follower != null && followee != null) {
-            follower.addFriend(followee);
-        }
+    public void addFriendship(int userId1, int userId2) {
+        socialGraph.addEdge(userId1, userId2);
     }
 
-    public Set<User> recommendFriends(String username) {
-        User user = getUser(username);
-        if (user == null) {
-            return new HashSet<>();
-        }
+    public List<Integer> recommendPosts(int userId) {
+        // Implement personalized PageRank with social regularization
+        Map<Integer, Double> scores = new HashMap<>();
+        List<Integer> friends = socialGraph.getFriends(userId);
+        for (int friend : friends) {
+            User friendUser = users.get(friend);
+            Set<Integer> friendInteractions = new HashSet<>();
+            friendInteractions.addAll(friendUser.getLikes());
+            friendInteractions.addAll(friendUser.getComments());
+            friendInteractions.addAll(friendUser.getShares());
 
-        Set<User> recommendations = new HashSet<>();
-        for (User friend : user.getFriends()) {
-            for (User friendOfFriend : friend.getFriends()) {
-                if (!user.getFriends().contains(friendOfFriend) && !friendOfFriend.equals(user)) {
-                    recommendations.add(friendOfFriend);
-                }
+            for (int interaction : friendInteractions) {
+                scores.put(interaction, scores.getOrDefault(interaction, 0.0) + 1.0);
             }
         }
 
-        return recommendations;
+        // Personalized PageRank with social regularization
+        Map<Integer, Double> newScores = new HashMap<>();
+        for (int postId : scores.keySet()) {
+            double score = scores.get(postId);
+            Post post = posts.get(postId);
+            Set<Integer> postInteractions = new HashSet<>();
+            postInteractions.addAll(post.getLikes());
+            postInteractions.addAll(post.getComments());
+            postInteractions.addAll(post.getShares());
+
+            for (int interaction : postInteractions) {
+                double friendScore = scores.getOrDefault(interaction, 0.0);
+                newScores.put(postId, newScores.getOrDefault(postId, 0.0) + friendScore);
+            }
+        }
+
+        // Sort posts by score
+        List<Map.Entry<Integer, Double>> sortedEntries = new ArrayList<>(newScores.entrySet());
+        sortedEntries.sort(Map.Entry.comparingByValue(Comparator.reverseOrder()));
+
+        // Get recommended posts
+        List<Integer> recommendedPosts = new ArrayList<>();
+        for (Map.Entry<Integer, Double> entry : sortedEntries) {
+            recommendedPosts.add(entry.getKey());
+        }
+        return recommendedPosts;
     }
 }
 
-public class SocialMediaApp extends JFrame {
-    private SocialNetwork socialNetwork;
-    private JTextField usernameField;
-    private JTextArea recommendationTextArea;
-
-    public SocialMediaApp() {
-        socialNetwork = new SocialNetwork();
-        initializeUI();
-    }
-
-    private void initializeUI() {
-        setTitle("Social Media Recommendation System");
-        setSize(400, 300);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new BorderLayout());
-
-        JPanel mainPanel = new JPanel();
-        mainPanel.setLayout(new BorderLayout());
-        add(mainPanel, BorderLayout.CENTER);
-
-        JPanel inputPanel = new JPanel(new FlowLayout());
-        JLabel usernameLabel = new JLabel("Enter Username:");
-        usernameField = new JTextField(20);
-        JButton recommendButton = new JButton("Get Recommendations");
-
-        recommendButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                String username = usernameField.getText();
-                if (username != null && !username.isEmpty()) {
-                    Set<User> recommendations = socialNetwork.recommendFriends(username);
-                    recommendationTextArea.setText("Recommendations for " + username + ":\n");
-                    for (User user : recommendations) {
-                        recommendationTextArea.append(user.getUsername() + "\n");
-                    }
-                } else {
-                    JOptionPane.showMessageDialog(SocialMediaApp.this, "Please enter a valid username.");
-                }
-            }
-        });
-
-        inputPanel.add(usernameLabel);
-        inputPanel.add(usernameField);
-        inputPanel.add(recommendButton);
-
-        mainPanel.add(inputPanel, BorderLayout.NORTH);
-
-        recommendationTextArea = new JTextArea(10, 30);
-        recommendationTextArea.setEditable(false);
-        JScrollPane scrollPane = new JScrollPane(recommendationTextArea);
-        mainPanel.add(scrollPane, BorderLayout.CENTER);
-    }
-
+public class SocialMediaApp {
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                SocialMediaApp app = new SocialMediaApp();
-                app.setVisible(true);
-            }
-        });
+        SocialMediaRecommendationSystem recommendationSystem = new SocialMediaRecommendationSystem();
+
+        // Create users
+        User user1 = new User(1);
+        User user2 = new User(2);
+        User user3 = new User(3);
+
+        // Add users to the recommendation system
+        recommendationSystem.addUser(user1);
+        recommendationSystem.addUser(user2);
+        recommendationSystem.addUser(user3);
+
+        // Create posts
+        Post post1 = new Post(101);
+        Post post2 = new Post(102);
+        Post post3 = new Post(103);
+        Post post4 = new Post(104);
+
+        // Add posts to the recommendation system
+        recommendationSystem.addPost(post1);
+        recommendationSystem.addPost(post2);
+        recommendationSystem.addPost(post3);
+        recommendationSystem.addPost(post4);
+
+        // Simulate user interactions (likes, comments, shares)
+        user1.likePost(post2.getId());
+        user1.commentOnPost(post3.getId());
+        user2.likePost(post1.getId());
+        user2.sharePost(post4.getId());
+        user3.likePost(post1.getId());
+        user3.commentOnPost(post2.getId());
+
+        // Establish friendships
+        recommendationSystem.addFriendship(user1.getId(), user2.getId());
+        recommendationSystem.addFriendship(user2.getId(), user3.getId());
+
+        // Recommend posts for user 1
+        List<Integer> recommendedPosts = recommendationSystem.recommendPosts(user1.getId());
+        System.out.println("Recommended posts for user 1: " + recommendedPosts);
     }
 }
